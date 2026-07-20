@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: ai-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+  gateway:
+    build: .
+    container_name: ai-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_TTL=3600
+      - DIFY_BASE_URL=http://172.17.0.1:5001/v1
+      - API_KEY=admin-secret-key-2026
+      - INTENT_API_KEY=app-xiotgTvFGf9Keucy77f6Khqx
+      - KNOWLEDGE_API_KEY=app-x0nyVb5OF27bBISNJY7KwXNi
+      - PROCESS_API_KEY=app-7TmuzetLxBDJw5jI9QZo6xO4
+      - PRIMARY_MODEL=qwen-plus
+      - FALLBACK_MODEL=qwen-max
+    depends_on:
+      - redis
+    restart: unless-stopped
+    volumes:
+      - ./app:/app/app
+      - ./.env:/app/.env
+
+volumes:
+  redis_data:
