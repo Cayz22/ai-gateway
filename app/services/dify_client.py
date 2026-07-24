@@ -143,17 +143,22 @@ class DifyClient:
             "error_detail": last_error
         }
 
-        async def _call_dify_api(self, url: str, payload: dict) -> dict:
-            import time
-            print(f"[性能-http] 发送请求前: {time.time()}")
-            async with self.session.post(url, json=payload) as resp:
-                if resp.status >= 400:
-                    text = await resp.text()
-                    raise aiohttp.ClientResponseError(
-                        status=resp.status,
-                        message=text,
-                        headers=resp.headers
-                    )
-                result = await resp.json()
-                print(f"[性能-http] 收到响应: {time.time()}")
-                return result
+    async def _call_dify_api(self, url: str, payload: dict) -> dict:
+        import time
+        print(f"[性能-http] 发送请求前: {time.time()}")
+        if self.session is None:
+            self.session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+                headers=self.headers
+            )
+        async with self.session.post(url, json=payload) as resp:
+            if resp.status >= 400:
+                text = await resp.text()
+                raise aiohttp.ClientResponseError(
+                    status=resp.status,
+                    message=text,
+                    headers=resp.headers
+                )
+            result = await resp.json()
+            print(f"[性能-http] 收到响应: {time.time()}")
+            return result
