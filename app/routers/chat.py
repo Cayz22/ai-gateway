@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse, HTMLResponse
 from typing import Optional
 import json
 from app.services.session_manager import SessionManager
+import asyncio
 
 # 请求统计（用于监控面板）
 request_stats = {
@@ -41,61 +42,53 @@ class ChatRequest(BaseModel):
 
 @router.post("/agent/run")
 async def run_agent(req: ChatRequest):
+    print(f"[性能] 请求开始: {time.time()}")
     start_time = time.time()
     trace_id = str(uuid.uuid4())[:8]
     request_stats["total_requests"] += 1
 
-    # ============================================================
-    # 会话历史处理
-    # ============================================================
     session_id = req.session_id or req.user_id
     history = session_manager.get_history(session_id)
     if history:
         print(f"[会话] session_id={session_id}, 历史长度={len(history)}")
     else:
         print(f"[会话] 新会话，无历史")
-    # 构建历史文本
+
     history_text = ""
     if history:
         history_text = "\n".join([
             f"{'用户' if msg['role'] == 'user' else 'AI'}: {msg['content']}"
-           for msg in history
+            for msg in history
         ])
-        # 限制长度不超过 200 字符（Dify 限制 256）
         if len(history_text) > 200:
             history_text = history_text[:200] + "..."
-            print(f"[会话] history_text 已截断: {len(history_text)} 字符")
-        print(f"[会话] history_text: {history_text}")
+            print(f"[会话] history_text已截断: {len(history_text)}字符")
 
-    # 始终传递 history 字段，即使为空
     inputs = {"history": history_text or ""}
-    print(f"[会话] inputs: {inputs}")
-    # ============================================================
+    # 初始化 result 和 agent
+    result = None
+    agent = "unknown"
 
     try:
-        # 1. 意图识别
-        intent_inputs = {"history": history_text or ""}
-        intent_res = await intent_client.chat(req.query, inputs=intent_inputs, user=req.user_id)
-        answer = intent_res.get("answer", "")
+        # 只调用知识库专家（内部已包含意图判断）
+        result = await knowledge_client.chat(req.query, inputs=inputs, user=req.user_id)
 
-        # 2. 解析意图路由返回的 JSON
-        try:
-            intent_data = json.loads(answer)
-            intent = intent_data.get("intent", "knowledge")
-        except:
-            # 如果解析失败，降级到关键词匹配
-            if "process" in answer.lower() or "流程" in answer:
-                intent = "process"
-            else:
-                intent = "knowledge"
+        if result.get("fallback"):
+            return {
+                "code": 200,
+                "data": {
+                    "answer": result.get("answer", "服务繁忙，请稍后重试"),
+                    "agent": "fallback",
+                    "trace_id": trace_id,
+                    "session_id": session_id
+                }
+            }
 
-        # 3. 路由分发
-        if intent == "process":
-            result = await process_client.chat(req.query, inputs=inputs, user=req.user_id)
+        # 检查回答中是否包含流程标记
+        answer = result.get("answer", "")
+        if "【PROCESS】" in answer:
             agent = "process_executor"
-        else:
-            result = await knowledge_client.chat(req.query, inputs=inputs, user=req.user_id)
-            agent = "knowledge_expert"
+
         # 更新统计
         request_stats["by_agent"][agent] += 1
         request_stats["total_time_ms"] += (time.time() - start_time) * 1000
@@ -104,14 +97,12 @@ async def run_agent(req: ChatRequest):
             (time.time() - start_time) * 1000
         )
 
-        # ============================================================
         # 保存历史
         if session_id:
             session_manager.append_message(session_id, "user", req.query)
             ai_answer = result.get("answer", "")
             session_manager.append_message(session_id, "ai", ai_answer)
             print(f"[会话] 已保存历史，当前长度: {len(session_manager.get_history(session_id))}")
-        # ============================================================
 
         return {
             "code": 200,
@@ -124,8 +115,10 @@ async def run_agent(req: ChatRequest):
         }
 
     except Exception as e:
-        request_stats["errors"][str(type(e).__name__)] += 1
+        import traceback
+        request_stats["errors"][str(type(e).__name__)] = request_stats["errors"].get(str(type(e).__name__), 0) + 1
         print(f"[错误] {trace_id}: {str(e)}")
+        print(f"[详细堆栈] {traceback.format_exc()}")
         return {
             "code": 500,
             "data": {
@@ -184,11 +177,13 @@ async def chat_stream(req: ChatRequest):
     
     async def generate():
         try:
-            # 1. 先调用意图识别（阻塞）
+            # 先调用意图识别（阻塞）
+            print(f"[性能] 开始意图识别: {time.time()}")
             intent_res = await intent_client.chat(req.query, user=req.user_id)
+            print(f"[性能] 意图识别完成: {time.time()}")
             answer = intent_res.get("answer", "")
             
-            # 2. 根据意图选择工作流
+            # 根据意图选择工作流
             if "process" in answer.lower() or "流程" in answer:
                 client = process_client
                 agent = "process_executor"
@@ -196,7 +191,7 @@ async def chat_stream(req: ChatRequest):
                 client = knowledge_client
                 agent = "knowledge_expert"
             
-            # 3. 调用 Dify 流式接口
+            # 调用 Dify 流式接口
             url = f"{client.base_url}/chat-messages"
             payload = {
                 "inputs": {},
