@@ -12,7 +12,7 @@ from fastapi import Security
 from fastapi import Depends
 
 load_dotenv()
-app = FastAPI(title="智联中枢 - 企业级AI网关", version="1.0.0")
+app = FastAPI(title="智联中枢 - AI网关", version="1.0.0")
 # ==================== Swagger Authorize 按钮配置 ====================
 security_scheme = HTTPBearer()
 # 安全依赖（用于 Swagger 显示 Authorize 按钮）
