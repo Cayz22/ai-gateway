@@ -28,14 +28,30 @@ API 认证:统一的 API Key 认证机制 (FastAPI 中间件)
 
 #快速启动
 ```bash
-# 1. 启动 Dify
-cd ~/dify/docker && docker compose up -d
+# 进入 Dify 的 Docker 目录
+cd ~/dify/docker
 
-# 2. 启动网关
-cd ~/enterprise-ai-gateway && docker compose up -d
+# 启动 Dify 服务
+docker compose up -d
 
-# 3. 验证
-curl http://localhost:8000/health
+# 等待 30 秒，确认容器运行正常
+docker compose ps
+# 确保 docker-api-1 状态为 Up
+
+# 验证 Dify API 可访问
+curl http://localhost:5001/v1/chat-messages \
+  -H "Content-Type: application/json" \
+  -d '{"query":"test"}' 2>/dev/null | head -c 100
+# 预期返回 {"code":"unauthorized"...}（说明 API 服务正常）
+
+# 进入项目目录
+cd ~/enterprise-ai-gateway
+
+# 激活虚拟环境（如果未激活）
+source venv/bin/activate
+
+# 启动 FastAPI 服务
+python3 -m app.main
 
 # 4. 访问
 http://localhost:8000/docs
